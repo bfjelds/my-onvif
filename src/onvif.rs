@@ -221,6 +221,7 @@ pub mod util {
                                 .probe_match
                                 .iter()
                                 .flat_map(|probe_match| probe_match.xaddrs.split_whitespace())
+                                .map(|x| scan_fmt!(x, "http://{}/onvif/device_service", String).unwrap())
                                 .map(|x| thread_devices.lock().unwrap().push(x.to_string()))
                                 .count();
                     },
