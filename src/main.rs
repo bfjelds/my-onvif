@@ -47,7 +47,7 @@ pub const GET_PROFILES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www
 pub const GET_SERVICES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
    <soap:Header/>
    <soap:Body>
-      <wsdl:GetProfiles />
+      <wsdl:GetServices />
    </soap:Body>
 </soap:Envelope>"#;
 
