@@ -17,6 +17,9 @@ use hyper::{
 
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
+use std::{
+   sync::{Arc, mpsc, Mutex},
+};
 
 mod onvif;
 use onvif::util;
@@ -68,19 +71,19 @@ async fn main() {
       info!("onvif devices found: {:?}", devices);
       for device in devices {
             info!("get device information for: {:?}", device);
-            simple_post(
+            let device_information_xmltree = simple_post(
                &"onvif/device_service".to_string(), 
                &device, 
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation""#.to_string(), 
                &GET_DEVICE_INFORMATION_TEMPLATE.to_string()).unwrap();
             info!("get services for: {:?}", device);
-            simple_post(
+            let services_xmltree = simple_post(
                &"onvif/device_service".to_string(),
                &device,
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetServices""#.to_string(), 
                &GET_SERVICES_TEMPLATE.to_string()).unwrap();
             info!("get profiles for: {:?}", device);
-            simple_post(
+            let stream_uri_xmltree = simple_post(
                &"onvif/Media".to_string(),
                &device,
                &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(), 
@@ -90,8 +93,9 @@ async fn main() {
     }.await;
 }
 
-fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<Vec<String>, failure::Error> {
-   let mut profiles: Vec<String> = Vec::new();
+fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<xmltree::Element, failure::Error> {
+   //let shared_profiles = Arc::new(Mutex::new(Vec::new()));
+   //let mut profiles: Vec<xmltree::Element> = Vec::new();
    let mut core = Core::new().unwrap();
    let handle = core.handle();
 
@@ -110,15 +114,20 @@ fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) ->
       ]));
    req.headers_mut().set(hyper::header::Connection::close());
 
+   //let request_profiles = shared_profiles.clone();
    let post = client.request(req).and_then(|res| { 
       trace!("pre res.body.concat2 response: {:?}", res);
       res.body().concat2()
          .and_then(move |body| {
             let v = body.to_vec();
-            trace!("post res.body.concat2 Response: {:?}", String::from_utf8_lossy(&v));
-            Ok(body)
+            let xml_as_string = String::from_utf8_lossy(&v);
+            trace!("post res.body.concat2 Response as string: {:?}", xml_as_string);
+            let xml_as_tree = xmltree::Element::parse(xml_as_string.as_bytes()).unwrap();
+            trace!("post res.body.concat2 Response as xmltree: {:?}", xml_as_tree);
+            //request_profiles.lock().unwrap().push(xml_as_tree.clone());
+            Ok(xml_as_tree)
          })
    });
-   let request_result = core.run(post);
-   Ok(profiles)
+   let request_result = core.run(post).expect("failed to make request");
+   Ok(request_result.clone())
 }
