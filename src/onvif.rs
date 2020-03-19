@@ -150,7 +150,7 @@ pub mod util {
     };
     use super::{common, to_deserialize, to_serialize};
     
-    pub fn simple_onvif_discover() -> Result<Vec<String>, failure::Error> {
+    pub fn simple_onvif_discover(timeout_seconds: u64) -> Result<Vec<String>, failure::Error> {
         let (sender, receiver) = mpsc::channel();
         let shared_devices = Arc::new(Mutex::new(Vec::new()));
     
@@ -235,8 +235,8 @@ pub mod util {
             sender.send(()).unwrap();
         });
     
-        trace!("simple_onvif_discover ... wait for thread to finish or 10 seconds");
-        let receiver_result = receiver.recv_timeout(Duration::from_secs(10));
+        trace!("simple_onvif_discover ... wait for thread to finish or {} seconds", timeout_seconds);
+        let receiver_result = receiver.recv_timeout(Duration::from_secs(timeout_seconds));
         trace!("simple_onvif_discover ... thread finished or timeout: {:?}", receiver_result);
         let result_devices = shared_devices.lock().unwrap().clone();
         info!("simple_onvif_discover ... devices: {:?}", result_devices);

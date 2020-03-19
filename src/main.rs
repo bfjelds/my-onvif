@@ -17,28 +17,30 @@ use hyper::{
 
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
-use std::{
-   sync::{Arc, mpsc, Mutex},
-};
 
 mod onvif;
 use onvif::util;
 
 
-pub const GET_STREAM_URI_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
-   <soap:Header/>
-   <soap:Body>
-      <wsdl:GetStreamUri>
-         <wsdl:StreamSetup>
-            <sch:Stream>RTP-Unicast</sch:Stream>
-            <sch:Transport>
-               <sch:Protocol>RTSP</sch:Protocol>
-            </sch:Transport>
-         </wsdl:StreamSetup>
-         <wsdl:ProfileToken>{profile_token}</wsdl:ProfileToken>
-      </wsdl:GetStreamUri>
-   </soap:Body>
-</soap:Envelope>;"#;
+fn get_stream_uri_message(profile: &String) -> String {
+   format!(
+      r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
+         <soap:Header/>
+         <soap:Body>
+            <wsdl:GetStreamUri>
+               <wsdl:StreamSetup>
+                  <sch:Stream>RTP-Unicast</sch:Stream>
+                  <sch:Transport>
+                     <sch:Protocol>RTSP</sch:Protocol>
+                  </sch:Transport>
+               </wsdl:StreamSetup>
+               <wsdl:ProfileToken>{}</wsdl:ProfileToken>
+            </wsdl:GetStreamUri>
+         </soap:Body>
+      </soap:Envelope>;"#,
+      profile
+   )
+}
 
 pub const GET_PROFILES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl">
    <soap:Header/>
@@ -61,13 +63,20 @@ pub const GET_DEVICE_INFORMATION_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="
    </soap:Body>
 </soap:Envelope>"#;
 
+pub const GET_SCOPES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+   <soap:Header/>
+   <soap:Body>
+      <wsdl:GetScopes/>
+   </soap:Body>
+</soap:Envelope>"#;
+
 #[tokio::main]
 async fn main() {
     env_logger::try_init().unwrap();
 
    async {
       trace!("enter my-onvif");
-      let devices = util::simple_onvif_discover().unwrap();
+      let devices = util::simple_onvif_discover(3).unwrap();
       info!("onvif devices found: {:?}", devices);
       for device in devices {
             info!("get device information for: {:?}", device);
@@ -76,18 +85,96 @@ async fn main() {
                &device, 
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation""#.to_string(), 
                &GET_DEVICE_INFORMATION_TEMPLATE.to_string()).unwrap();
+            let device_information = device_information_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetDeviceInformationResponse").unwrap();
+            trace!("Device information: {:?}", device_information);
+            info!("get scopes for: {:?}", device);
+            let scopes_xmltree = simple_post(
+               &"onvif/device_service".to_string(), 
+               &device, 
+               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetScopes""#.to_string(), 
+               &GET_SCOPES_TEMPLATE.to_string()).unwrap();
+            let scopes = scopes_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetScopesResponse").unwrap();
+            trace!("Scopes: {:?}", scopes);
             info!("get services for: {:?}", device);
             let services_xmltree = simple_post(
                &"onvif/device_service".to_string(),
                &device,
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetServices""#.to_string(), 
                &GET_SERVICES_TEMPLATE.to_string()).unwrap();
+            let media_uris = services_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetServicesResponse").unwrap()
+               .children
+               .to_owned()
+               .into_iter()
+               .filter(|service| service.as_element().unwrap().get_child("Namespace").unwrap().get_text().unwrap() == "http://www.onvif.org/ver10/media/wsdl")
+               .map(|service| service.as_element().unwrap().get_child("XAddr").unwrap().get_text().unwrap().to_string())
+               .collect::<Vec<String>>();
+            trace!("Media uri: {:?}", media_uris.first().unwrap());
             info!("get profiles for: {:?}", device);
+            let profiles_xmltree = simple_post(
+               &"onvif/Media".to_string(),
+               &device,
+               &r#"action="http://www.onvif.org/ver10/media/wsdl/GetProfiles""#.to_string(), 
+               &GET_PROFILES_TEMPLATE.to_string()).unwrap();
+            let profile_token = profiles_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetProfilesResponse").unwrap()
+               .children
+               .to_owned()
+               .first().unwrap()
+               .as_element().unwrap()
+               .attributes["token"]
+               .clone();
+            trace!("Profile token: {:?}", profile_token);
+            info!("get media stream uri for: {:?}", device);
+            let stream_soap = get_stream_uri_message(&profile_token);
             let stream_uri_xmltree = simple_post(
                &"onvif/Media".to_string(),
                &device,
-               &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(), 
-               &GET_PROFILES_TEMPLATE.to_string()).unwrap();
+               &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(),
+               &stream_soap).unwrap();
+            let stream_uris = stream_uri_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetStreamUriResponse").unwrap()
+               .children
+               .to_owned()
+               .into_iter()
+               .map(|media_uri| media_uri.as_element().unwrap().get_child("Uri").unwrap().get_text().unwrap().to_string())
+               .collect::<Vec<String>>();
+            trace!("Streaming uri: {:?}", stream_uris.first().unwrap());
+
+            let profile_uris = profiles_xmltree
+               .get_child("Body").unwrap()
+               .get_child("GetProfilesResponse").unwrap()
+               .children
+               .to_owned()
+               .into_iter()
+               .map(|profile| { 
+                  let profile_token = profile.as_element().unwrap().attributes["token"].clone();
+                  let stream_soap = get_stream_uri_message(&profile_token);
+                  let stream_uri_xmltree = simple_post(
+                     &"onvif/Media".to_string(),
+                     &device,
+                     &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(),
+                     &stream_soap).unwrap();
+                  let stream_uris = stream_uri_xmltree
+                     .get_child("Body").unwrap()
+                     .get_child("GetStreamUriResponse").unwrap()
+                     .children
+                     .to_owned()
+                     .into_iter()
+                     .map(|media_uri| media_uri.as_element().unwrap().get_child("Uri").unwrap().get_text().unwrap().to_string())
+                     .collect::<Vec<String>>();
+                  (profile_token, stream_uris.first().unwrap().to_string())
+               })
+               .collect::<Vec<(String, String)>>();
+            trace!("Profile token: {:?}", profile_uris);
+            info!("get media stream uri for: {:?}", device);
       }
       trace!("exit my-onvif");
     }.await;
@@ -131,3 +218,4 @@ fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) ->
    let request_result = core.run(post).expect("failed to make request");
    Ok(request_result.clone())
 }
+
