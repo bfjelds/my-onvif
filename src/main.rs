@@ -76,7 +76,7 @@ async fn main() {
 
    async {
       trace!("enter my-onvif");
-      let devices = util::simple_onvif_discover(3).unwrap();
+      let devices: Vec<String> = util::simple_onvif_discover(1).unwrap();
       info!("onvif devices found: {:?}", devices);
       for device in devices {
             info!("get device information for: {:?}", device);
@@ -115,39 +115,12 @@ async fn main() {
                .map(|service| service.as_element().unwrap().get_child("XAddr").unwrap().get_text().unwrap().to_string())
                .collect::<Vec<String>>();
             trace!("Media uri: {:?}", media_uris.first().unwrap());
-            info!("get profiles for: {:?}", device);
+            info!("get profiles and streaming uris for: {:?}", device);
             let profiles_xmltree = simple_post(
                &"onvif/Media".to_string(),
                &device,
                &r#"action="http://www.onvif.org/ver10/media/wsdl/GetProfiles""#.to_string(), 
                &GET_PROFILES_TEMPLATE.to_string()).unwrap();
-            let profile_token = profiles_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetProfilesResponse").unwrap()
-               .children
-               .to_owned()
-               .first().unwrap()
-               .as_element().unwrap()
-               .attributes["token"]
-               .clone();
-            trace!("Profile token: {:?}", profile_token);
-            info!("get media stream uri for: {:?}", device);
-            let stream_soap = get_stream_uri_message(&profile_token);
-            let stream_uri_xmltree = simple_post(
-               &"onvif/Media".to_string(),
-               &device,
-               &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(),
-               &stream_soap).unwrap();
-            let stream_uris = stream_uri_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetStreamUriResponse").unwrap()
-               .children
-               .to_owned()
-               .into_iter()
-               .map(|media_uri| media_uri.as_element().unwrap().get_child("Uri").unwrap().get_text().unwrap().to_string())
-               .collect::<Vec<String>>();
-            trace!("Streaming uri: {:?}", stream_uris.first().unwrap());
-
             let profile_uris = profiles_xmltree
                .get_child("Body").unwrap()
                .get_child("GetProfilesResponse").unwrap()
@@ -173,7 +146,7 @@ async fn main() {
                   (profile_token, stream_uris.first().unwrap().to_string())
                })
                .collect::<Vec<(String, String)>>();
-            trace!("Profile token: {:?}", profile_uris);
+            info!("Profile token: {:?}", profile_uris);
             info!("get media stream uri for: {:?}", device);
       }
       trace!("exit my-onvif");
