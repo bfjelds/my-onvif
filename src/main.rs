@@ -22,8 +22,7 @@ mod onvif;
 use onvif::util;
 
 
-pub const GET_STREAM_URI_TEMPLATE: &str = r#"<?xml version='1.0' encoding='utf-8'?>
-<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
+pub const GET_STREAM_URI_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
    <soap:Header/>
    <soap:Body>
       <wsdl:GetStreamUri>
@@ -38,11 +37,24 @@ pub const GET_STREAM_URI_TEMPLATE: &str = r#"<?xml version='1.0' encoding='utf-8
    </soap:Body>
 </soap:Envelope>;"#;
 
-pub const GET_PROFILES_TEMPLATE: &str = r#"<?xml version='1.0' encoding='utf-8'?>
-<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl">
+pub const GET_PROFILES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl">
    <soap:Header/>
    <soap:Body>
       <wsdl:GetProfiles/>
+   </soap:Body>
+</soap:Envelope>"#;
+
+pub const GET_SERVICES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+   <soap:Header/>
+   <soap:Body>
+      <wsdl:GetProfiles />
+   </soap:Body>
+</soap:Envelope>"#;
+
+pub const GET_DEVICE_INFORMATION_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+   <soap:Header/>
+   <soap:Body>
+      <wsdl:GetDeviceInformation/>
    </soap:Body>
 </soap:Envelope>"#;
 
@@ -55,38 +67,48 @@ async fn main() {
       let devices = util::simple_onvif_discover().unwrap();
       info!("onvif devices found: {:?}", devices);
       for device in devices {
+            info!("get device information for: {:?}", device);
+            simple_post(
+               &"onvif/device_service".to_string(), 
+               &device, 
+               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation""#.to_string(), 
+               &GET_DEVICE_INFORMATION_TEMPLATE.to_string()).unwrap();
+            info!("get services for: {:?}", device);
+            simple_post(
+               &"onvif/device_service".to_string(),
+               &device,
+               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetServices""#.to_string(), 
+               &GET_SERVICES_TEMPLATE.to_string()).unwrap();
             info!("get profiles for: {:?}", device);
-            let profiles = simple_get_onvif_profiles(&device);
-            info!("get stream for: {:?}", device);
+            simple_post(
+               &"onvif/Media".to_string(),
+               &device,
+               &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(), 
+               &GET_PROFILES_TEMPLATE.to_string()).unwrap();
       }
       trace!("exit my-onvif");
     }.await;
 }
 
-fn simple_get_onvif_profiles(device: &String) -> Result<Vec<String>, failure::Error> {
+fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<Vec<String>, failure::Error> {
    let mut profiles: Vec<String> = Vec::new();
    let mut core = Core::new().unwrap();
    let handle = core.handle();
+
    let client = Client::new(&handle);
-
-   let uri: Uri = format!("http://{}/onvif/Media", device).parse().unwrap();
-
-   // let req = hyper::Request::builder()
-   //    .method(hyper::Method::POST)
-   //    .header(hyper::header::CONTENT_TYPE, "application/soap+xml")
-   //    .body(hyper::Body::from(GET_PROFILES_TEMPLATE));
-
-    let mut req = hyper::Request::new(hyper::Method::Post, uri);
-    let content_type: hyper::mime::Mime = "application/soap+xml".parse().unwrap();
-    req.headers_mut().set(hyper::header::ContentType(content_type));
-    req.set_body(hyper::Body::from(GET_PROFILES_TEMPLATE));
-
-   //  let req = hyper::Request::builder()
-   //       .method(hyper::Method::POST)
-   //       .uri(uri)
-   //       .header(hyper::header::CONTENT_TYPE, "application/soap+xml")
-   //       .body(hyper::Body::from(GET_PROFILES_TEMPLATE))
-   //       .expect("request builder");
+   let uri: Uri = format!("http://{}:8899/{}", ip, url).parse().unwrap();
+   let mut req = hyper::Request::new(hyper::Method::Post, uri);
+   let body = hyper::Body::from(msg.clone().into_bytes());
+   req.set_body(body);
+   let full_mime = format!("{}; {}; {};", "application/soap+xml", "charset=utf-8", mime_action);
+   let content_type: hyper::mime::Mime = full_mime.parse().unwrap();
+   req.headers_mut().set(hyper::header::ContentType(content_type));
+   req.headers_mut().set(hyper::header::ContentLength(msg.len() as u64));
+   req.headers_mut().set(hyper::header::AcceptEncoding(vec![
+      hyper::header::qitem(hyper::header::Encoding::Deflate), 
+      hyper::header::qitem(hyper::header::Encoding::Gzip)
+      ]));
+   req.headers_mut().set(hyper::header::Connection::close());
 
    let post = client.request(req).and_then(|res| { 
       trace!("pre res.body.concat2 response: {:?}", res);
