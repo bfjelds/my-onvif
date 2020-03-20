@@ -102,7 +102,30 @@ async fn main() {
       };
       info!("onvif devices found: {:?}", devices);
       for device in devices {
-            info!("get device information for: {:?}", device);
+
+         info!("get service uris for: {:?}", device);
+         let services_xml = simple_post(
+            &"onvif/device_service".to_string(),
+            &device,
+            &r#"action="http://www.onvif.org/ver10/device/wsdl/GetServices""#.to_string(), 
+            &GET_SERVICES_TEMPLATE.to_string()).unwrap();
+         let services_doc = services_xml.as_document();
+         let device_service_uri = sxd_xpath::evaluate_xpath(
+               &services_doc,
+               "//*[local-name()='GetServicesResponse']/*[local-name()='Service' and *[local-name()='Namespace']/text() ='http://www.onvif.org/ver10/device/wsdl']/*[local-name()='XAddr']/text()"
+            )
+            .unwrap()
+            .string();
+         info!("Device service uris: {:?}", device_service_uri);
+         let media_service_uri = sxd_xpath::evaluate_xpath(
+               &services_doc,
+               "//*[local-name()='GetServicesResponse']/*[local-name()='Service' and *[local-name()='Namespace']/text() ='http://www.onvif.org/ver10/media/wsdl']/*[local-name()='XAddr']/text()"
+            )
+            .unwrap()
+            .string();
+         info!("Media service uris: {:?}", media_service_uri);
+         
+         info!("get device information for: {:?}", device);
             let device_information_xml = simple_post(
                &"onvif/device_service".to_string(), 
                &device, 
