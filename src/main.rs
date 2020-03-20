@@ -158,11 +158,16 @@ async fn main() {
             info!("Network interfaces (mac address): {:?}", mac_address);
 
             let id = format!("{}-{}", device, mac_address);
-            let mut hasher = VarBlake2b::new(5).unwrap();
+            let mut hasher = VarBlake2b::new(3).unwrap();
             hasher.input(id.clone());
-            let digest = hasher.vec_result();
-            info!("DIGEST {}: {:?}", id, digest);
-            
+            let digest = hasher
+               .vec_result()
+               .iter()
+               .map(|num| format!("{:02X}", num))
+               .collect::<Vec<String>>()
+               .join("");
+            info!("DIGEST {}: {}", id, digest);
+
             let hostname_xml = simple_post(
                &"onvif/device_service".to_string(),
                &device,
