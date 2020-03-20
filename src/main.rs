@@ -94,8 +94,12 @@ async fn main() {
 
    async {
       trace!("enter my-onvif");
-      // let devices: Vec<String> = vec!["192.168.1.36".into(), "192.168.1.35".into()];
-      let devices: Vec<String> = util::simple_onvif_discover(1).unwrap();
+
+      let devices: Vec<String> =
+         match std::env::var("DISCOVERED_DEVICES") {
+            Ok(env_devices) => env_devices.split(";").map(|s| s.to_string()).collect(),
+            _ => util::simple_onvif_discover(1).unwrap(),
+      };
       info!("onvif devices found: {:?}", devices);
       for device in devices {
             info!("get device information for: {:?}", device);
