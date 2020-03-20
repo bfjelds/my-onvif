@@ -21,6 +21,9 @@ use tokio_core::reactor::Core;
 use sxd_document;
 use sxd_xpath;
 
+use blake2::VarBlake2b;
+use blake2::digest::{Input, VariableOutput};
+
 mod onvif;
 use onvif::util;
 
@@ -153,6 +156,12 @@ async fn main() {
                .unwrap()
                .string();
             info!("Network interfaces (mac address): {:?}", mac_address);
+
+            let id = format!("{}-{}", device, mac_address);
+            let mut hasher = VarBlake2b::new(5).unwrap();
+            hasher.input(id.clone());
+            let digest = hasher.vec_result();
+            info!("DIGEST {}: {:?}", id, digest);
             
             let hostname_xml = simple_post(
                &"onvif/device_service".to_string(),

@@ -35,3 +35,5 @@ mime = "0.3"
 sxd-document = "0.3.0"
 sxd-xpath = "0.4.0"
 
+blake2 = "0.8.0"
+
