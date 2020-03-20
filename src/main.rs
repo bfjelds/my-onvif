@@ -18,6 +18,9 @@ use hyper::{
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 
+use sxd_document;
+use sxd_xpath;
+
 mod onvif;
 use onvif::util;
 
@@ -41,6 +44,13 @@ fn get_stream_uri_message(profile: &String) -> String {
       profile
    )
 }
+
+pub const GET_NETWORK_INTERFACES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+   <soap:Header/>
+   <soap:Body>
+      <wsdl:GetNetworkInterfaces/>
+   </soap:Body>
+</soap:Envelope>"#;
 
 pub const GET_PROFILES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl">
    <soap:Header/>
@@ -70,92 +80,125 @@ pub const GET_SCOPES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w
    </soap:Body>
 </soap:Envelope>"#;
 
+pub const GET_HOSTNAME_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+   <soap:Header/>
+   <soap:Body>
+      <wsdl:GetHostname/>
+   </soap:Body>
+</soap:Envelope>"#;
+
+
 #[tokio::main]
 async fn main() {
     env_logger::try_init().unwrap();
 
    async {
       trace!("enter my-onvif");
+      // let devices: Vec<String> = vec!["192.168.1.36".into(), "192.168.1.35".into()];
       let devices: Vec<String> = util::simple_onvif_discover(1).unwrap();
       info!("onvif devices found: {:?}", devices);
       for device in devices {
             info!("get device information for: {:?}", device);
-            let device_information_xmltree = simple_post(
+            let device_information_xml = simple_post(
                &"onvif/device_service".to_string(), 
                &device, 
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation""#.to_string(), 
                &GET_DEVICE_INFORMATION_TEMPLATE.to_string()).unwrap();
-            let device_information = device_information_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetDeviceInformationResponse").unwrap();
-            trace!("Device information: {:?}", device_information);
+            let device_information_doc = device_information_xml.as_document();
+            let serial_number = sxd_xpath::evaluate_xpath(
+                  &device_information_doc,
+                  "//*[local-name()='GetDeviceInformationResponse']/*[local-name()='SerialNumber']/text()"
+               )
+               .unwrap()
+               .string();
+            info!("Device information (serial number): {:?}", serial_number);
+
+            let network_interfaces_xml = simple_post(
+               &"onvif/device_service".to_string(),
+               &device,
+               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetNetworkInterfaces""#.to_string(), 
+               &GET_NETWORK_INTERFACES_TEMPLATE.to_string()).unwrap();
+            let network_interfaces_doc = network_interfaces_xml.as_document();
+            let mac_address = sxd_xpath::evaluate_xpath(
+                  &network_interfaces_doc,
+                  "//*[local-name()='GetNetworkInterfacesResponse']/*[local-name()='NetworkInterfaces']/*[local-name()='Info']/*[local-name()='HwAddress']/text()"
+               )
+               .unwrap()
+               .string();
+            info!("Network interfaces (mac address): {:?}", mac_address);
+            
+            let hostname_xml = simple_post(
+               &"onvif/device_service".to_string(),
+               &device,
+               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetHostname""#.to_string(), 
+               &GET_HOSTNAME_TEMPLATE.to_string()).unwrap();
+            let hostname_doc = hostname_xml.as_document();
+            let hostname = sxd_xpath::evaluate_xpath(
+                  &hostname_doc,
+                  "//*[local-name()='GetHostnameResponse']/*[local-name()='HostnameInformation']/*[local-name()='Name']/text()"
+               )
+               .unwrap()
+               .string();
+            info!("Hostname: {:?}", hostname);
+            
             info!("get scopes for: {:?}", device);
-            let scopes_xmltree = simple_post(
+            let scopes_xml = simple_post(
                &"onvif/device_service".to_string(), 
                &device, 
                &r#"action="http://www.onvif.org/ver10/device/wsdl/GetScopes""#.to_string(), 
                &GET_SCOPES_TEMPLATE.to_string()).unwrap();
-            let scopes = scopes_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetScopesResponse").unwrap();
-            trace!("Scopes: {:?}", scopes);
-            info!("get services for: {:?}", device);
-            let services_xmltree = simple_post(
-               &"onvif/device_service".to_string(),
-               &device,
-               &r#"action="http://www.onvif.org/ver10/device/wsdl/GetServices""#.to_string(), 
-               &GET_SERVICES_TEMPLATE.to_string()).unwrap();
-            let media_uris = services_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetServicesResponse").unwrap()
-               .children
-               .to_owned()
-               .into_iter()
-               .filter(|service| service.as_element().unwrap().get_child("Namespace").unwrap().get_text().unwrap() == "http://www.onvif.org/ver10/media/wsdl")
-               .map(|service| service.as_element().unwrap().get_child("XAddr").unwrap().get_text().unwrap().to_string())
-               .collect::<Vec<String>>();
-            trace!("Media uri: {:?}", media_uris.first().unwrap());
+            let scopes_doc = scopes_xml.as_document();
+            let scopes_query = sxd_xpath::evaluate_xpath(
+               &scopes_doc,
+               "//*[local-name()='GetScopesResponse']/*[local-name()='Scopes']/*[local-name()='ScopeItem']/text()"
+            );
+            let scopes = match scopes_query {
+                  Ok(sxd_xpath::Value::Nodeset(scope_items)) => {
+                     scope_items.iter().map(|scope_item| scope_item.string_value() ).collect::<Vec<String>>()
+                  },
+                  _ => panic!("TODO: uses error not panic!")
+               };
+            info!("Scopes: {:?}", scopes);
+
             info!("get profiles and streaming uris for: {:?}", device);
-            let profiles_xmltree = simple_post(
+            let profiles_xml = simple_post(
                &"onvif/Media".to_string(),
                &device,
                &r#"action="http://www.onvif.org/ver10/media/wsdl/GetProfiles""#.to_string(), 
                &GET_PROFILES_TEMPLATE.to_string()).unwrap();
-            let profile_uris = profiles_xmltree
-               .get_child("Body").unwrap()
-               .get_child("GetProfilesResponse").unwrap()
-               .children
-               .to_owned()
-               .into_iter()
-               .map(|profile| { 
-                  let profile_token = profile.as_element().unwrap().attributes["token"].clone();
-                  let stream_soap = get_stream_uri_message(&profile_token);
-                  let stream_uri_xmltree = simple_post(
-                     &"onvif/Media".to_string(),
-                     &device,
-                     &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(),
-                     &stream_soap).unwrap();
-                  let stream_uris = stream_uri_xmltree
-                     .get_child("Body").unwrap()
-                     .get_child("GetStreamUriResponse").unwrap()
-                     .children
-                     .to_owned()
-                     .into_iter()
-                     .map(|media_uri| media_uri.as_element().unwrap().get_child("Uri").unwrap().get_text().unwrap().to_string())
-                     .collect::<Vec<String>>();
-                  (profile_token, stream_uris.first().unwrap().to_string())
-               })
-               .collect::<Vec<(String, String)>>();
-            info!("Profile token: {:?}", profile_uris);
-            info!("get media stream uri for: {:?}", device);
+            let profiles_doc = profiles_xml.as_document();
+            let profiles_query = sxd_xpath::evaluate_xpath(
+               &profiles_doc,
+               "//*[local-name()='GetProfilesResponse']/*[local-name()='Profiles']/@token"
+            );
+            let uri_info = match profiles_query {
+                  Ok(sxd_xpath::Value::Nodeset(tokens)) => {
+                     tokens.iter().map(|profile_token| {
+                        let stream_soap = get_stream_uri_message(&profile_token.string_value());
+                        let stream_uri_xml = simple_post(
+                           &"onvif/Media".to_string(),
+                           &device,
+                           &r#"action="http://www.onvif.org/ver10/media/wsdl/GetStreamUri""#.to_string(),
+                           &stream_soap).unwrap();
+                        let stream_uri_doc = stream_uri_xml.as_document();
+                        let stream_uri = sxd_xpath::evaluate_xpath(
+                              &stream_uri_doc,
+                              "//*[local-name()='GetStreamUriResponse']/*[local-name()='MediaUri']/*[local-name()='Uri']/text()"
+                           )
+                           .unwrap()
+                           .string();
+                        (profile_token.string_value(), stream_uri)
+                     }).collect::<Vec<(String, String)>>()
+                  },
+                  _ => panic!("TODO: replace iwth error")
+               };
+            info!("Profile tokens: {:?}", uri_info);
       }
       trace!("exit my-onvif");
     }.await;
 }
 
-fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<xmltree::Element, failure::Error> {
-   //let shared_profiles = Arc::new(Mutex::new(Vec::new()));
-   //let mut profiles: Vec<xmltree::Element> = Vec::new();
+fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<sxd_document::Package, failure::Error> {
    let mut core = Core::new().unwrap();
    let handle = core.handle();
 
@@ -174,7 +217,6 @@ fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) ->
       ]));
    req.headers_mut().set(hyper::header::Connection::close());
 
-   //let request_profiles = shared_profiles.clone();
    let post = client.request(req).and_then(|res| { 
       trace!("pre res.body.concat2 response: {:?}", res);
       res.body().concat2()
@@ -182,13 +224,14 @@ fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) ->
             let v = body.to_vec();
             let xml_as_string = String::from_utf8_lossy(&v);
             trace!("post res.body.concat2 Response as string: {:?}", xml_as_string);
-            let xml_as_tree = xmltree::Element::parse(xml_as_string.as_bytes()).unwrap();
+
+            //let xml_as_tree = xmltree::Element::parse(xml_as_string.as_bytes()).unwrap();
+            let xml_as_tree = sxd_document::parser::parse(&xml_as_string).unwrap();
             trace!("post res.body.concat2 Response as xmltree: {:?}", xml_as_tree);
-            //request_profiles.lock().unwrap().push(xml_as_tree.clone());
             Ok(xml_as_tree)
          })
    });
-   let request_result = core.run(post).expect("failed to make request");
-   Ok(request_result.clone())
+   let dom = core.run(post).expect("failed to make request");
+   Ok(dom)
 }
 
