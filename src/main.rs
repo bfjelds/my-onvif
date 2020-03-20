@@ -10,10 +10,7 @@ extern crate tokio_core;
 
 use env_logger;
 
-use hyper::{
-   Client,
-   Uri,
-};
+use hyper::{Client, Uri};
 
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
@@ -21,16 +18,15 @@ use tokio_core::reactor::Core;
 use sxd_document;
 use sxd_xpath;
 
-use blake2::VarBlake2b;
 use blake2::digest::{Input, VariableOutput};
+use blake2::VarBlake2b;
 
 mod onvif;
 use onvif::util;
 
-
 fn get_stream_uri_message(profile: &String) -> String {
-   format!(
-      r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
+    format!(
+        r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
          <soap:Header/>
          <soap:Body>
             <wsdl:GetStreamUri>
@@ -44,8 +40,8 @@ fn get_stream_uri_message(profile: &String) -> String {
             </wsdl:GetStreamUri>
          </soap:Body>
       </soap:Envelope>;"#,
-      profile
-   )
+        profile
+    )
 }
 
 pub const GET_NETWORK_INTERFACES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
@@ -90,12 +86,11 @@ pub const GET_HOSTNAME_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www
    </soap:Body>
 </soap:Envelope>"#;
 
-
 #[tokio::main]
 async fn main() {
     env_logger::try_init().unwrap();
 
-   async {
+    async {
       trace!("enter my-onvif");
 
       let devices: Vec<String> =
@@ -239,40 +234,54 @@ async fn main() {
     }.await;
 }
 
-fn simple_post(url: &String, ip: &String, mime_action: &String, msg: &String) -> Result<sxd_document::Package, failure::Error> {
-   let mut core = Core::new().unwrap();
-   let handle = core.handle();
+fn simple_post(
+    url: &String,
+    ip: &String,
+    mime_action: &String,
+    msg: &String,
+) -> Result<sxd_document::Package, failure::Error> {
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
 
-   let client = Client::new(&handle);
-   let uri: Uri = format!("http://{}:8899/{}", ip, url).parse().unwrap();
-   let mut req = hyper::Request::new(hyper::Method::Post, uri);
-   let body = hyper::Body::from(msg.clone().into_bytes());
-   req.set_body(body);
-   let full_mime = format!("{}; {}; {};", "application/soap+xml", "charset=utf-8", mime_action);
-   let content_type: hyper::mime::Mime = full_mime.parse().unwrap();
-   req.headers_mut().set(hyper::header::ContentType(content_type));
-   req.headers_mut().set(hyper::header::ContentLength(msg.len() as u64));
-   req.headers_mut().set(hyper::header::AcceptEncoding(vec![
-      hyper::header::qitem(hyper::header::Encoding::Deflate), 
-      hyper::header::qitem(hyper::header::Encoding::Gzip)
-      ]));
-   req.headers_mut().set(hyper::header::Connection::close());
+    let client = Client::new(&handle);
+    let uri: Uri = format!("http://{}:8899/{}", ip, url).parse().unwrap();
+    let mut req = hyper::Request::new(hyper::Method::Post, uri);
+    let body = hyper::Body::from(msg.clone().into_bytes());
+    req.set_body(body);
+    let full_mime = format!(
+        "{}; {}; {};",
+        "application/soap+xml", "charset=utf-8", mime_action
+    );
+    let content_type: hyper::mime::Mime = full_mime.parse().unwrap();
+    req.headers_mut()
+        .set(hyper::header::ContentType(content_type));
+    req.headers_mut()
+        .set(hyper::header::ContentLength(msg.len() as u64));
+    req.headers_mut().set(hyper::header::AcceptEncoding(vec![
+        hyper::header::qitem(hyper::header::Encoding::Deflate),
+        hyper::header::qitem(hyper::header::Encoding::Gzip),
+    ]));
+    req.headers_mut().set(hyper::header::Connection::close());
 
-   let post = client.request(req).and_then(|res| { 
-      trace!("pre res.body.concat2 response: {:?}", res);
-      res.body().concat2()
-         .and_then(move |body| {
+    let post = client.request(req).and_then(|res| {
+        trace!("pre res.body.concat2 response: {:?}", res);
+        res.body().concat2().and_then(move |body| {
             let v = body.to_vec();
             let xml_as_string = String::from_utf8_lossy(&v);
-            trace!("post res.body.concat2 Response as string: {:?}", xml_as_string);
+            trace!(
+                "post res.body.concat2 Response as string: {:?}",
+                xml_as_string
+            );
 
             //let xml_as_tree = xmltree::Element::parse(xml_as_string.as_bytes()).unwrap();
             let xml_as_tree = sxd_document::parser::parse(&xml_as_string).unwrap();
-            trace!("post res.body.concat2 Response as xmltree: {:?}", xml_as_tree);
+            trace!(
+                "post res.body.concat2 Response as xmltree: {:?}",
+                xml_as_tree
+            );
             Ok(xml_as_tree)
-         })
-   });
-   let dom = core.run(post).expect("failed to make request");
-   Ok(dom)
+        })
+    });
+    let dom = core.run(post).expect("failed to make request");
+    Ok(dom)
 }
-
