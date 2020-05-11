@@ -1,244 +1,721 @@
+pub mod device_info {
+    use async_trait::async_trait;
+    use hyper::Request;
+    use log::trace;
+    use std::io::{Error, ErrorKind};
+    use sxd_document::{parser, Package};
+    use sxd_xpath::Value;
+    use futures_util::stream::TryStreamExt;
+    
+    pub const ONVIF_DEVICE_SERVICE_URL_LABEL_ID: &str = "ONVIF_DEVICE_SERVICE_URL";
+    pub const ONVIF_DEVICE_IP_ADDRESS_LABEL_ID: &str = "ONVIF_DEVICE_IP_ADDRESS";
+    pub const ONVIF_DEVICE_MAC_ADDRESS_LABEL_ID: &str = "ONVIF_DEVICE_MAC_ADDRESS";
+    pub const MEDIA_WSDL: &str = "http://www.onvif.org/ver10/media/wsdl";
+    pub const DEVICE_WSDL: &str = "http://www.onvif.org/ver10/device/wsdl";
 
-mod to_serialize {
-    use std::io::Write;
-    use super::common::*;
-    use yaserde::YaSerialize;
-
-    #[derive(Default, PartialEq, Debug, YaSerialize)]
-    #[yaserde(prefix = "s", namespace = "s: http://www.w3.org/2003/05/soap-envelope")]
-    pub struct Envelope {
-        #[yaserde(prefix = "s", rename = "Header")]
-        pub header: Header,
-
-        #[yaserde(prefix = "s", rename = "Body")]
-        pub body: Body,
+    //
+    // mockall and async_trait do not work effortlessly together ... to enable both,
+    // follow the example here:
+    //     https://github.com/mibes/mockall-async/blob/53aec15219a720ef5ac483959ff8821cb7d656ae/src/main.rs
+    //
+    // When async traits are supported by Rust without the async_trait crate, we should
+    // add:
+    //    #[automock]
+    //
+    #[async_trait]
+    pub trait OnvifQuery {
+        async fn get_device_ip_and_mac_address(
+            &self,
+            service_url: &str,
+        ) -> Result<(String, String), failure::Error>;
+        async fn get_device_scopes(&self, url: &str) -> Result<Vec<String>, failure::Error>;
+        async fn get_device_service_uri(
+            &self,
+            url: &str,
+            service: &str,
+        ) -> Result<String, failure::Error>;
+        async fn get_device_profiles(
+            &self,
+            url: &str,
+        ) -> Result<Vec<String>, failure::Error>;
+        async fn get_device_profile_streaming_uri(
+            &self,
+            url: &str,
+            profile_token: &str,
+        ) -> Result<String, failure::Error>;
     }
 
-    #[derive(Default, PartialEq, Debug, YaSerialize)]
-    #[yaserde(
-        prefix = "s",
-        namespace = "s: http://www.w3.org/2003/05/soap-envelope",
-        namespace = "d: http://schemas.xmlsoap.org/ws/2005/04/discovery"
-    )]
-    pub struct Body {
-        #[yaserde(prefix = "d", rename = "Probe")]
-        pub probe: Probe,
-    }
+    pub struct OnvifQueryImpl {}
 
-    #[derive(Default, PartialEq, Debug, YaSerialize)]
-    #[yaserde(
-        prefix = "s",
-        namespace = "s: http://www.w3.org/2003/05/soap-envelope",
-        namespace = "w: http://schemas.xmlsoap.org/ws/2004/08/addressing"
-    )]
-    pub struct Header {
-        #[yaserde(prefix = "w", rename = "MessageID")]
-        pub message_id: String,
-    
-        #[yaserde(prefix = "w", rename = "To")]
-        pub reply_to: String,
-    
-        #[yaserde(prefix = "w", rename = "Action")]
-        pub action: String,
-    }
-    
-}
+    #[async_trait]
+    impl OnvifQuery for OnvifQueryImpl {
+        async fn get_device_ip_and_mac_address(
+            &self,
+            service_url: &str,
+        ) -> Result<(String, String), failure::Error> {
+            let http = HttpRequest {};
+            inner_get_device_ip_and_mac_address(service_url, &http).await
+        }
 
-mod to_deserialize {
-    use std::io::Read;
-    use super::common::*;
-    use yaserde::YaDeserialize;
-    
-    #[derive(Default, PartialEq, Debug, YaDeserialize)]
-    #[yaserde(prefix = "s", namespace = "s: http://www.w3.org/2003/05/soap-envelope")]
-    pub struct Envelope {
-        #[yaserde(prefix = "s", rename = "Header")]
-        pub header: Header,
-    
-        #[yaserde(prefix = "s", rename = "Body")]
-        pub body: Body,
-    }
-    
-    #[derive(Default, PartialEq, Debug, YaDeserialize)]
-    #[yaserde(
-        prefix = "s",
-        namespace = "s: http://www.w3.org/2003/05/soap-envelope",
-        namespace = "d: http://schemas.xmlsoap.org/ws/2005/04/discovery"
-    )]
-    pub struct Body {
-        #[yaserde(prefix = "d", rename = "ProbeMatches")]
-        pub probe_matches: ProbeMatches,
-    }
+        async fn get_device_scopes(&self, url: &str) -> Result<Vec<String>, failure::Error> {
+            let http = HttpRequest {};
+            inner_get_device_scopes(url, &http).await
+        }
 
-    #[derive(Default, PartialEq, Debug, YaDeserialize)]
-    #[yaserde(
-        prefix = "s",
-        namespace = "s: http://www.w3.org/2003/05/soap-envelope",
-        namespace = "w: http://schemas.xmlsoap.org/ws/2004/08/addressing"
-    )]
-    pub struct Header {
-        #[yaserde(prefix = "w", rename = "RelatesTo")]
-        pub relates_to: String,
-    }
-    
-}
+        async fn get_device_service_uri(
+            &self,
+            url: &str,
+            service: &str,
+        ) -> Result<String, failure::Error> {
+            let http = HttpRequest {};
+            inner_get_device_service_uri(url, service, &http).await
+        }
 
-mod common {
-    use std::io::{Read, Write};
-    use yaserde::{YaDeserialize, YaSerialize};
+        async fn get_device_profiles(
+            &self,
+            url: &str,
+        ) -> Result<Vec<String>, failure::Error> {
+            let http = HttpRequest {};
+            inner_get_device_profiles(url, &http).await
+        }
 
-    #[derive(PartialEq, Debug, YaDeserialize, YaSerialize)]
-    pub enum ProbeType {
-        #[yaserde(rename = "wsdl:Device")]
-        Device,
-        #[yaserde(rename = "wsdl:NetworkVideoTransmitter")]
-        NetworkVideoTransmitter,
-    }
-    impl Default for ProbeType {
-        fn default() -> ProbeType {
-            Self::Device
+        async fn get_device_profile_streaming_uri(
+            &self,
+            url: &str,
+            profile_token: &str
+        ) -> Result<String, failure::Error> {
+            let http = HttpRequest {};
+            inner_get_device_profile_streaming_uri(url, profile_token, &http).await
         }
     }
-    #[derive(Default, PartialEq, Debug, YaDeserialize, YaSerialize)]
-    #[yaserde(
-        prefix = "d",
-        namespace = "d: http://schemas.xmlsoap.org/ws/2005/04/discovery",
-        namespace = "wsdl: http://www.onvif.org/ver10/network/wsdl"
-    )]
-    pub struct Probe {
-        #[yaserde(prefix = "d", rename = "Types")]
-        pub probe_types: Vec<String>,        
-    }
-    
-    #[derive(Default, PartialEq, Debug, YaDeserialize, YaSerialize)]
-    #[yaserde(
-        prefix = "d",
-        namespace = "d: http://schemas.xmlsoap.org/ws/2005/04/discovery",
-        namespace = "wsa: http://schemas.xmlsoap.org/ws/2004/08/addressing"
-    )]
-    pub struct ProbeMatch {
-        #[yaserde(prefix = "d", rename = "XAddrs")]
-        pub xaddrs: String,
-        #[yaserde(prefix = "wsa", rename = "EndpointReference")]
-        pub endpoint_reference: String,
-        #[yaserde(prefix = "d", rename = "Types")]
-        pub types: Vec<ProbeType>,        
-        #[yaserde(prefix = "d", rename = "Scopes")]
-        pub scopes: Vec<String>,
-        #[yaserde(prefix = "d", rename = "MetadataVersion")]
-        pub metadata_version: String,
-    }
-    
-    #[derive(Default, PartialEq, Debug, YaDeserialize, YaSerialize)]
-    #[yaserde(
-        prefix = "d",
-        namespace = "d: http://schemas.xmlsoap.org/ws/2005/04/discovery"
-    )]
-    pub struct ProbeMatches {
-        #[yaserde(prefix = "d", rename = "ProbeMatch")]
-        pub probe_match: Vec<ProbeMatch>,
-    }    
-}
 
-pub mod util {
-    use log::{info, trace, error};
-    use std::{
-        sync::{Arc, mpsc, Mutex},
-        thread,
-        time::Duration,
-        net::{IpAddr, Ipv4Addr, UdpSocket, SocketAddr}
-    };
-    use super::{common, to_deserialize, to_serialize};
-    
-    pub fn simple_onvif_discover() -> Result<Vec<String>, failure::Error> {
-        let (sender, receiver) = mpsc::channel();
-        let shared_devices = Arc::new(Mutex::new(Vec::new()));
-    
-        const LOCAL_IPV4_ADDR: Ipv4Addr = Ipv4Addr::UNSPECIFIED;
-        const LOCAL_PORT: u16 = 0;
-    
-        const MULTI_IPV4_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
-        const MULTI_PORT: u16 = 3702;
-    
-        let local_socket_addr = SocketAddr::new(IpAddr::V4(LOCAL_IPV4_ADDR), LOCAL_PORT);
-        let multi_socket_addr = SocketAddr::new(IpAddr::V4(MULTI_IPV4_ADDR), MULTI_PORT);
-    
-        trace!("simple_onvif_discover ... in spawned thread ... binding to: {:?}", local_socket_addr);
-        let socket = UdpSocket::bind(local_socket_addr).unwrap();
-        let shared_socket = Arc::new(Mutex::new(socket));
-    
-        let thread_devices = shared_devices.clone();
-    
-        let (signal_request_sent, wait_for_signal) = mpsc::channel();
-        let send_socket = shared_socket.clone();
-        thread::spawn(move || {   
-            trace!("simple_onvif_discover ... in spawned send thread");
-    
-            trace!("simple_onvif_discover ... in spawned thread ... joining multicast: {:?} {:?}", &MULTI_IPV4_ADDR, &LOCAL_IPV4_ADDR);
-            send_socket.lock().unwrap().join_multicast_v4(&MULTI_IPV4_ADDR, &LOCAL_IPV4_ADDR).unwrap();
-            let probe_types: Vec<String> = vec!["wsdl:NetworkVideoTransmitter".into()];
-            let envelope = to_serialize::Envelope {
-                header: to_serialize::Header {
-                    message_id: format!("uuid:{}", uuid::Uuid::new_v4()),
-                    action: "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe".into(),
-                    reply_to: "urn:schemas-xmlsoap-org:ws:2005:04:discovery".into(),
-                    ..Default::default()
-                },
-                body: to_serialize::Body {
-                    probe: common::Probe {
-                        probe_types: probe_types,
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
+    #[async_trait]
+    trait Http {
+        async fn post(&self, url: &str, mime_action: &str, msg: &str) -> Result<Package, failure::Error>;
+    }
+
+    struct HttpRequest {}
+
+    impl HttpRequest {
+        fn handle_request_body(
+            body: &str
+        ) -> Result<Package, failure::Error> {
+            let xml_as_tree = match parser::parse(&body) {
+                Ok(xml_as_tree) => xml_as_tree,
+                Err(e) => return Err(Error::new(ErrorKind::InvalidData, e).into()),
             };
-            let envelope_as_string = yaserde::ser::to_string(&envelope).unwrap();
-            trace!("-------> serialized: [{}]", envelope_as_string);
-            trace!("simple_onvif_discover ... in spawned send thread ... sending: {:?}", &envelope_as_string);
-            send_socket.lock().unwrap().send_to(&envelope_as_string.as_bytes(), multi_socket_addr).unwrap();
-            trace!("simple_onvif_discover ... in spawned send thread ... signalling finished");
-            signal_request_sent.send(()).unwrap();
-            trace!("simple_onvif_discover ... exit spawned send thread");
-        });
+            trace!(
+                "handle_request_body - response as xmltree: {:?}",
+                xml_as_tree
+            );
+            Ok(xml_as_tree)
+        }
+    }
     
-        let listen_socket = shared_socket.clone();
-        thread::spawn(move || {
-            trace!("simple_onvif_discover ... in spawned listen thread");
-            wait_for_signal.recv().unwrap();
-            trace!("simple_onvif_discover ... in spawned listen thread ... start listening for responses");
-            loop {
-                let mut buf = vec![0; 16 * 1024];
-                match listen_socket.lock().unwrap().recv_from(&mut buf) {
-                    Ok((len, _src)) => {
-                        trace!("simple_onvif_discover ... in spawned listen thread ... recv_from: {:?} {:?}", len, _src);
-                        let broadcast_response_as_string = String::from_utf8_lossy(&buf[..len]).to_string();
-                        trace!("simple_onvif_discover ... in spawned listen thread ... response: {:?}", broadcast_response_as_string);
-                        let response_envelope = yaserde::de::from_str::<to_deserialize::Envelope>(&broadcast_response_as_string);
-                        let _consume_the_iterators = response_envelope
-                                .unwrap()
-                                .body
-                                .probe_matches
-                                .probe_match
-                                .iter()
-                                .flat_map(|probe_match| probe_match.xaddrs.split_whitespace())
-                                .map(|x| thread_devices.lock().unwrap().push(x.to_string()))
-                                .count();
-                    },
-                    Err(_e) => { 
-                        error!("simple_onvif_discover ... in spawned listen thread ... recv_from: {:?}", _e);
-                        break;
-                    }
+    #[async_trait]
+    impl Http for HttpRequest {
+        async fn post(&self, url: &str, mime_action: &str, msg: &str) -> Result<Package, failure::Error> {
+            trace!(
+                "post - url:{}, mime_action:{}, msg:{}",
+                &url,
+                &mime_action,
+                &msg
+            );
+    
+            let full_mime = format!(
+                "{}; {}; {};",
+                "application/soap+xml", "charset=utf-8", mime_action
+            );
+            let request = Request::post(url)
+                .header("CONTENT-TYPE", full_mime)
+                .body(msg.to_string().into())
+                .expect("infallible");
+            let response = hyper::Client::new()
+                .request(request)
+                .await
+                .unwrap();
+            if response.status() != 200 {
+                return Err(failure::format_err!("failure"))
+            }
+            let response_body = response
+                .into_body()
+                .try_fold(bytes::BytesMut::new(), |mut acc, chunk| async {
+                    acc.extend(chunk);
+                    Ok(acc)
+                })
+                .await?
+                .freeze();
+            let response_body_str = std::str::from_utf8(&response_body)?;
+            match HttpRequest::handle_request_body(&response_body_str) {
+                Ok(dom) => Ok(dom),
+                Err(e) => {
+                    trace!("post - failure to handle response: {:?}", &response_body_str);
+                    Err(Error::new(ErrorKind::InvalidData, e).into())
                 }
             }
-            trace!("simple_onvif_discover ... in spawned listen thread ... finished");
-            sender.send(()).unwrap();
-        });
+        }
+    }
+
+    fn get_action(wsdl: &str, function: &str) -> String {
+        format!("action=\"{}/{}\"", wsdl, function)
+    }
+
+    async fn inner_get_device_ip_and_mac_address(
+        service_url: &str,
+        http: &impl Http,
+    ) -> Result<(String, String), failure::Error> {
+        let network_interfaces_xml = match http.post(
+            service_url,
+            &get_action(DEVICE_WSDL, "GetNetworkInterfaces"),
+            &GET_NETWORK_INTERFACES_TEMPLATE.to_string(),
+        ).await {
+            Ok(xml) => xml,
+            Err(e) => {
+                return Err(failure::format_err!(
+                    "failed to get network interfaces from device: {:?}",
+                    e
+                ))
+            }
+        };
+        let network_interfaces_doc = network_interfaces_xml.as_document();
+        let ip_address = match sxd_xpath::evaluate_xpath(
+                &network_interfaces_doc,
+                "//*[local-name()='GetNetworkInterfacesResponse']/*[local-name()='NetworkInterfaces']/*[local-name()='IPv4']/*[local-name()='Config']/*/*[local-name()='Address']/text()"
+            ) {
+                Ok(Value::String(ip)) => ip,
+                Ok(Value::Nodeset(ns)) => match ns.into_iter().map(|x| x.string_value()).collect::<Vec<String>>().first() {
+                    Some(first) => first.to_string(),
+                    None => return Err(failure::format_err!("Failed to get ONVIF ip address: none specified in response"))
+                },
+                Ok(Value::Boolean(_)) |
+                Ok(Value::Number(_)) => return Err(failure::format_err!("Failed to get ONVIF ip address: unexpected type")),
+                Err(e) => return Err(failure::format_err!("Failed to get ONVIF ip address: {}", e))
+            };
+        trace!(
+            "inner_get_device_ip_and_mac_address - network interfaces (ip address): {:?}",
+            ip_address
+        );
+        let mac_address = match sxd_xpath::evaluate_xpath(
+                &network_interfaces_doc,
+                "//*[local-name()='GetNetworkInterfacesResponse']/*[local-name()='NetworkInterfaces']/*[local-name()='Info']/*[local-name()='HwAddress']/text()"
+            ) {
+                Ok(Value::String(mac)) => mac,
+                Ok(Value::Nodeset(ns)) => match ns.iter().map(|x| x.string_value()).collect::<Vec<String>>().first() {
+                    Some(first) => first.to_string(),
+                    None => return Err(failure::format_err!("Failed to get ONVIF mac address: none specified in response"))
+                },
+                Ok(Value::Boolean(_)) |
+                Ok(Value::Number(_)) => return Err(failure::format_err!("Failed to get ONVIF mac address: unexpected type")),
+                Err(e) => return Err(failure::format_err!("Failed to get ONVIF mac address: {}", e))
+            };
+        trace!(
+            "inner_get_device_ip_and_mac_address - network interfaces (mac address): {:?}",
+            mac_address
+        );
+        Ok((ip_address, mac_address))
+    }
+
+    async fn inner_get_device_scopes(url: &str, http: &impl Http) -> Result<Vec<String>, failure::Error> {
+        let scopes_xml = match http.post(
+            &url,
+            &get_action(DEVICE_WSDL, "GetScopes"),
+            &GET_SCOPES_TEMPLATE.to_string(),
+        ).await {
+            Ok(xml) => xml,
+            Err(e) => {
+                return Err(failure::format_err!(
+                    "failed to get scopes from device: {:?}",
+                    e
+                ))
+            }
+        };
+        let scopes_doc = scopes_xml.as_document();
+        let scopes_query = sxd_xpath::evaluate_xpath(
+            &scopes_doc,
+            "//*[local-name()='GetScopesResponse']/*[local-name()='Scopes']/*[local-name()='ScopeItem']/text()"
+        );
+        let scopes = match scopes_query {
+            Ok(Value::Nodeset(scope_items)) => scope_items
+                .iter()
+                .map(|scope_item| scope_item.string_value())
+                .collect::<Vec<String>>(),
+            Ok(Value::Boolean(_)) | Ok(Value::Number(_)) | Ok(Value::String(_)) => {
+                return Err(failure::format_err!(
+                    "Failed to get ONVIF scopes: unexpected type"
+                ))
+            }
+            Err(e) => return Err(failure::format_err!("Failed to get ONVIF scopes: {}", e)),
+        };
+        trace!("inner_get_device_scopes - scopes: {:?}", scopes);
+        Ok(scopes)
+    }
+
+    const GET_NETWORK_INTERFACES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+        <soap:Header/>
+            <soap:Body>
+                <wsdl:GetNetworkInterfaces/>
+            </soap:Body>
+        </soap:Envelope>"#;
+
+    const GET_SCOPES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+        <soap:Header/>
+            <soap:Body>
+                <wsdl:GetScopes/>
+            </soap:Body>
+        </soap:Envelope>"#;
+
+    async fn inner_get_device_service_uri(
+        url: &str,
+        service: &str,
+        http: &impl Http,
+    ) -> Result<String, failure::Error> {
+        let services_xml = match http.post(
+            &url,
+            &get_action(DEVICE_WSDL, "GetServices"),
+            &GET_SERVICES_TEMPLATE.to_string(),
+        ).await {
+            Ok(xml) => xml,
+            Err(e) => {
+                return Err(failure::format_err!(
+                    "failed to get services from device: {:?}",
+                    e
+                ))
+            }
+        };
+        let services_doc = services_xml.as_document();
+        let service_xpath_query = format!(
+            "//*[local-name()='GetServicesResponse']/*[local-name()='Service' and *[local-name()='Namespace']/text() ='{}']/*[local-name()='XAddr']/text()",
+            service
+        );
+        let requested_device_service_uri =
+            match sxd_xpath::evaluate_xpath(&services_doc, service_xpath_query.as_str()) {
+                Ok(uri) => uri.string(),
+                Err(e) => {
+                    return Err(failure::format_err!(
+                        "failed to get servuce uri from resoinse: {:?}",
+                        e
+                    ))
+                }
+            };
+        trace!(
+            "inner_get_device_service_uri - service ({}) uris: {:?}",
+            service,
+            requested_device_service_uri
+        );
+        Ok(requested_device_service_uri)
+    }
+
+    const GET_SERVICES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+        <soap:Header/>
+            <soap:Body>
+                <wsdl:GetServices />
+            </soap:Body>
+        </soap:Envelope>"#;
+
+    async fn inner_get_device_profiles(
+        url: &str,
+        http: &impl Http,
+    ) -> Result<Vec<String>, failure::Error> {
+        let action = get_action(MEDIA_WSDL, "GetProfiles");
+        let message = GET_PROFILES_TEMPLATE.to_string();
+        let profiles_xml = match http.post(&url, &action, &message).await {
+            Ok(xml) => xml,
+            Err(e) => {
+                return Err(failure::format_err!(
+                    "failed to get profiles from device: {:?}",
+                    e
+                ))
+            }
+        };
+        let profiles_doc = profiles_xml.as_document();
+        let profiles_query = sxd_xpath::evaluate_xpath(
+            &profiles_doc,
+            "//*[local-name()='GetProfilesResponse']/*[local-name()='Profiles']/@token",
+        );
+        let mut profiles = match profiles_query {
+            Ok(Value::Nodeset(profiles_items)) => profiles_items
+                .iter()
+                .map(|profile_item| profile_item.string_value())
+                .collect::<Vec<String>>(),
+            Ok(Value::Boolean(_)) | Ok(Value::Number(_)) | Ok(Value::String(_)) => {
+                return Err(failure::format_err!(
+                    "Failed to get ONVIF profiles: unexpected type"
+                ))
+            }
+            Err(e) => return Err(failure::format_err!("Failed to get ONVIF profiles: {}", e)),
+        };
+        trace!("inner_get_device_scopes - profiles: {:?}", profiles);
+        profiles.sort();
+        trace!("inner_get_device_scopes - sorted profiles: {:?}", profiles);
+        Ok(profiles)
+    }
+
+    async fn inner_get_device_profile_streaming_uri(
+        url: &str,
+        profile_token: &str,
+        http: &impl Http,
+    ) -> Result<String, failure::Error> {
+        let stream_soap = get_stream_uri_message(&profile_token);
+        let stream_uri_xml = match http.post(
+            &url,
+            &get_action(MEDIA_WSDL, "GetStreamUri"),
+            &stream_soap).await {
+                Ok(xml) => xml,
+                Err(e) => {
+                    return Err(failure::format_err!(
+                        "failed to get streaming uri from device: {:?}",
+                        e
+                    ))
+                }
+            };
+        let stream_uri_doc = stream_uri_xml.as_document();
+        let stream_uri = match sxd_xpath::evaluate_xpath(
+            &stream_uri_doc,
+            "//*[local-name()='GetStreamUriResponse']/*[local-name()='MediaUri']/*[local-name()='Uri']/text()"
+            ) {
+                Ok(stream) => stream.string(),
+                Err(e) => {
+                    return Err(failure::format_err!(
+                        "failed to get servuce uri from resoinse: {:?}",
+                        e
+                    ))
+                }
+            };
+        Ok(stream_uri)
+    }
+
+    fn get_stream_uri_message(profile: &str) -> String {
+        format!(
+            r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl" xmlns:sch="http://www.onvif.org/ver10/schema">
+                <soap:Header/>
+                <soap:Body>
+                    <wsdl:GetStreamUri>
+                    <wsdl:StreamSetup>
+                        <sch:Stream>RTP-Unicast</sch:Stream>
+                        <sch:Transport>
+                            <sch:Protocol>RTSP</sch:Protocol>
+                        </sch:Transport>
+                    </wsdl:StreamSetup>
+                    <wsdl:ProfileToken>{}</wsdl:ProfileToken>
+                    </wsdl:GetStreamUri>
+                </soap:Body>
+            </soap:Envelope>;"#,
+            profile
+        )
+    }
+
+    const GET_PROFILES_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/media/wsdl">
+        <soap:Header/>
+            <soap:Body>
+                <wsdl:GetProfiles/>
+            </soap:Body>
+        </soap:Envelope>"#;
+
+    //  const GET_DEVICE_INFORMATION_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+    //     <soap:Header/>
+    //         <soap:Body>
+    //             <wsdl:GetDeviceInformation/>
+    //         </soap:Body>
+    //     </soap:Envelope>"#;
+
+    //  const GET_HOSTNAME_TEMPLATE: &str = r#"<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:wsdl="http://www.onvif.org/ver10/device/wsdl">
+    //     <soap:Header/>
+    //         <soap:Body>
+    //             <wsdl:GetHostname/>
+    //         </soap:Body>
+    //     </soap:Envelope>"#;
+
+    pub mod test_onvif {
+        use super::*;
+        use async_trait::async_trait;
+        use mockall::predicate::*;
+        use mockall::*;
     
-        trace!("simple_onvif_discover ... wait for thread to finish or 10 seconds");
-        let receiver_result = receiver.recv_timeout(Duration::from_secs(10));
-        trace!("simple_onvif_discover ... thread finished or timeout: {:?}", receiver_result);
-        let result_devices = shared_devices.lock().unwrap().clone();
-        info!("simple_onvif_discover ... devices: {:?}", result_devices);
-        Ok(result_devices)
+        //
+        // mockall and async_trait do not work effortlessly together ... to enable both,
+        // follow the example here:
+        //     https://github.com/mibes/mockall-async/blob/53aec15219a720ef5ac483959ff8821cb7d656ae/src/main.rs
+        //
+        // We can probably eliminate this when async traits are supported by Rust without
+        // the async_trait crate.
+        //
+        mock! {
+            pub HttpImpl {
+                fn post(&self, url: &str, mime_action: &str, msg: &str) -> Result<Package, failure::Error>;
+            }
+        }
+
+        #[async_trait]
+        impl Http for MockHttpImpl {
+            async fn post(
+                &self,
+                url: &str,
+                mime_action: &str,
+                msg: &str
+            ) -> Result<Package, failure::Error> {
+                self.post(url, mime_action, msg)
+            }
+        }
+
+        mock! {
+            pub OnvifQueryImpl {
+                fn get_device_ip_and_mac_address(
+                    &self,
+                    service_url: &str,
+                ) -> Result<(String, String), failure::Error>;
+                fn get_device_scopes(&self, url: &str) -> Result<Vec<String>, failure::Error>;
+                fn get_device_service_uri(
+                    &self,
+                    url: &str,
+                    service: &str,
+                ) -> Result<String, failure::Error>;
+                fn get_device_profiles(
+                    &self,
+                    url: &str,
+                ) -> Result<Vec<String>, failure::Error>;
+                fn get_device_profile_streaming_uri(
+                    &self,
+                    url: &str,
+                    profile_token: &str,
+                ) -> Result<String, failure::Error>;
+            }
+        }
+        
+        #[async_trait]
+        impl OnvifQuery for MockOnvifQueryImpl {
+            async fn get_device_ip_and_mac_address(
+                &self,
+                service_url: &str,
+            ) -> Result<(String, String), failure::Error> {
+                self.get_device_ip_and_mac_address(service_url)
+            }
+            async fn get_device_scopes(&self, url: &str) -> Result<Vec<String>, failure::Error> {
+                self.get_device_scopes(url)
+            }
+            async fn get_device_service_uri(
+                &self,
+                url: &str,
+                service: &str,
+            ) -> Result<String, failure::Error> {
+                self.get_device_service_uri(url, service)
+            }
+            async fn get_device_profiles(
+                &self,
+                url: &str,
+            ) -> Result<Vec<String>, failure::Error> {
+                self.get_device_profiles(url)
+            }
+            async fn get_device_profile_streaming_uri(
+                &self,
+                url: &str,
+                profile_token: &str,
+            ) -> Result<String, failure::Error> {
+                self.get_device_profile_streaming_uri(url, profile_token)
+            }
+        }
     }    
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use super::test_onvif::*;
+
+        fn configure_post(mock: &mut MockHttpImpl, url: &str, mime: &str, msg: &str, output_xml: &str) {
+            let inner_url = url.to_string();
+            let inner_mime = mime.to_string();
+            let inner_msg = msg.to_string();
+            let inner_output_xml = output_xml.to_string();
+            trace!("mock.expect_post url:{}, mime:{}, msg:{}", url, mime, msg);
+            mock.expect_post()
+                .times(1)
+                .withf(move |actual_url, actual_mime, actual_msg| {
+                    actual_url == inner_url && actual_mime == inner_mime && actual_msg == inner_msg
+                })
+                .returning(move |_, _, _| {
+                    Ok(inner_output_xml.to_string())
+                });
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_ip_and_mac_address_ip_in_manual() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let mut mock = MockHttpImpl::new();
+            let response = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xs=\"http://www.w3.org/2000/10/XMLSchema\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ns1=\"http://www.w3.org/2005/05/xmlmime\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:ns7=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:ns2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:ns10=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:ns11=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ns13=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:ns14=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:ns15=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:ns16=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:ns17=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:ns18=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:ns19=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:ns20=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:ns21=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:ns22=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:ns3=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:ns4=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:ns5=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:ns8=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:ns9=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trt2=\"http://www.onvif.org/ver20/media/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><tds:GetNetworkInterfacesResponse><tds:NetworkInterfaces token=\"eth0\"><tt:Enabled>true</tt:Enabled><tt:Info><tt:Name>eth0</tt:Name><tt:HwAddress>00:12:41:5c:a1:a5</tt:HwAddress><tt:MTU>1500</tt:MTU></tt:Info><tt:Link><tt:AdminSettings><tt:AutoNegotiation>false</tt:AutoNegotiation><tt:Speed>10</tt:Speed><tt:Duplex>Full</tt:Duplex></tt:AdminSettings><tt:OperSettings><tt:AutoNegotiation>false</tt:AutoNegotiation><tt:Speed>10</tt:Speed><tt:Duplex>Full</tt:Duplex></tt:OperSettings><tt:InterfaceType>0</tt:InterfaceType></tt:Link><tt:IPv4><tt:Enabled>true</tt:Enabled><tt:Config><tt:Manual><tt:Address>192.168.1.36</tt:Address><tt:PrefixLength>24</tt:PrefixLength></tt:Manual><tt:DHCP>false</tt:DHCP></tt:Config></tt:IPv4></tds:NetworkInterfaces></tds:GetNetworkInterfacesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>";
+            configure_post(
+                &mut mock,
+                &"test_inner_get_device_ip_and_mac_address-url".to_string(),
+                &get_action(DEVICE_WSDL, "GetNetworkInterfaces"),
+                &GET_NETWORK_INTERFACES_TEMPLATE.to_string(),
+                &response.to_string(),
+            );
+            assert_eq!(
+                ("192.168.1.36".to_string(), "00:12:41:5c:a1:a5".to_string()),
+                inner_get_device_ip_and_mac_address(
+                    &"test_inner_get_device_ip_and_mac_address-url".to_string(),
+                    &mock
+                )
+                .await
+                .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_ip_and_mac_address_ip_in_from_dhcp() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let mut mock = MockHttpImpl::new();
+            let response = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:c14n=\"http://www.w3.org/2001/10/xml-exc-c14n#\" xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\" xmlns:xenc=\"http://www.w3.org/2001/04/xmlenc#\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:xmime=\"http://tempuri.org/xmime.xsd\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:wsbf2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:wsr2=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:daae=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:dare=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:decpp=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:dee=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:denc=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:denf=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:depp=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:depps=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:depsm=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:desm=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:tad=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tls=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:tmd=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trc=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:trp=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trv=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:tse=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><tds:GetNetworkInterfacesResponse><tds:NetworkInterfaces token=\"eth0\"><tt:Enabled>true</tt:Enabled><tt:Info><tt:Name>eth0</tt:Name><tt:HwAddress>00:FC:DA:B1:69:CC</tt:HwAddress><tt:MTU>1500</tt:MTU></tt:Info><tt:IPv4><tt:Enabled>true</tt:Enabled><tt:Config><tt:LinkLocal><tt:Address>10.137.185.208</tt:Address><tt:PrefixLength>0</tt:PrefixLength></tt:LinkLocal><tt:FromDHCP><tt:Address>10.137.185.208</tt:Address><tt:PrefixLength>23</tt:PrefixLength></tt:FromDHCP><tt:DHCP>true</tt:DHCP></tt:Config></tt:IPv4></tds:NetworkInterfaces></tds:GetNetworkInterfacesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>\r\n";
+            configure_post(
+                &mut mock,
+                &"test_inner_get_device_ip_and_mac_address-url".to_string(),
+                &get_action(DEVICE_WSDL, "GetNetworkInterfaces"),
+                &GET_NETWORK_INTERFACES_TEMPLATE.to_string(),
+                &response.to_string(),
+            );
+            assert_eq!(
+                (
+                    "10.137.185.208".to_string(),
+                    "00:FC:DA:B1:69:CC".to_string()
+                ),
+                inner_get_device_ip_and_mac_address(
+                    &"test_inner_get_device_ip_and_mac_address-url".to_string(),
+                    &mock
+                )
+                .await
+                .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_scopes() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let mut mock = MockHttpImpl::new();
+            let response = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xs=\"http://www.w3.org/2000/10/XMLSchema\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ns1=\"http://www.w3.org/2005/05/xmlmime\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:ns7=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:ns2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:ns10=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:ns11=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ns13=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:ns14=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:ns15=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:ns16=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:ns17=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:ns18=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:ns19=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:ns20=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:ns21=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:ns22=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:ns3=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:ns4=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:ns5=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:ns8=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:ns9=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trt2=\"http://www.onvif.org/ver20/media/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><tds:GetScopesResponse><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/video_encoder</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/audio_encoder</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/hardware/IPC-model</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/location/country/china</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/name/NVT</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem></tds:Scopes><tds:Scopes><tt:ScopeDef>Configurable</tt:ScopeDef><tt:ScopeItem>odm:name:fjEvtevision</tt:ScopeItem></tds:Scopes></tds:GetScopesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>";
+            configure_post(
+                &mut mock,
+                &"test_inner_get_device_scopes-url".to_string(),
+                &get_action(DEVICE_WSDL, "GetScopes"),
+                &GET_SCOPES_TEMPLATE.to_string(),
+                &response.to_string(),
+            );
+
+            let mut expected = [
+                "onvif://www.onvif.org/type/audio_encoder".to_string(),
+                "onvif://www.onvif.org/type/video_encoder".to_string(),
+                "onvif://www.onvif.org/Profile/Streaming".to_string(),
+                "odm:name:fjEvtevision".to_string(),
+                "onvif://www.onvif.org/hardware/IPC-model".to_string(),
+                "onvif://www.onvif.org/location/country/china".to_string(),
+                "onvif://www.onvif.org/name/NVT".to_string(),
+            ]
+            .to_vec();
+            expected.sort();
+
+            let mut actual =
+                inner_get_device_scopes(&"test_inner_get_device_scopes-url".to_string(), &mock)
+                    .await
+                    .unwrap();
+            actual.sort();
+
+            assert_eq!(expected, actual);
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_service_uri() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let mut mock = MockHttpImpl::new();
+            let response = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xs=\"http://www.w3.org/2000/10/XMLSchema\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ns1=\"http://www.w3.org/2005/05/xmlmime\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:ns7=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:ns2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:ns10=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:ns11=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ns13=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:ns14=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:ns15=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:ns16=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:ns17=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:ns18=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:ns19=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:ns20=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:ns21=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:ns22=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:ns3=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:ns4=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:ns5=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:ns8=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:ns9=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trt2=\"http://www.onvif.org/ver20/media/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><tds:GetServicesResponse><tds:Service><tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace><tds:XAddr>http://192.168.1.35:8899/onvif/device_service</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>41</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace><tds:XAddr>http://192.168.1.35:8899/onvif/Media</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>41</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver10/events/wsdl</tds:Namespace><tds:XAddr>http://192.168.1.35:8899/onvif/Events</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>41</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/imaging/wsdl</tds:Namespace><tds:XAddr>http://192.168.1.35:8899/onvif/Imaging</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>41</tt:Minor></tds:Version></tds:Service><tds:Service><tds:Namespace>http://www.onvif.org/ver20/ptz/wsdl</tds:Namespace><tds:XAddr>http://192.168.1.35:8899/onvif/PTZ</tds:XAddr><tds:Version><tt:Major>2</tt:Major><tt:Minor>41</tt:Minor></tds:Version></tds:Service></tds:GetServicesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>";
+            configure_post(
+                &mut mock,
+                &"test_inner_get_device_service_uri-url".to_string(),
+                &get_action(DEVICE_WSDL, "GetServices"),
+                &GET_SERVICES_TEMPLATE.to_string(),
+                &response.to_string(),
+            );
+            assert_eq!(
+                "http://192.168.1.35:8899/onvif/Media".to_string(),
+                inner_get_device_service_uri(
+                    &"test_inner_get_device_service_uri-url".to_string(),
+                    &MEDIA_WSDL.to_string(),
+                    &mock
+                )
+                .await
+                .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_profiles() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let mut mock = MockHttpImpl::new();
+            // GetProfiles is the first call
+            {
+                let response = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xs=\"http://www.w3.org/2000/10/XMLSchema\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ns1=\"http://www.w3.org/2005/05/xmlmime\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:ns7=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:ns2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:ns10=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:ns11=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ns13=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:ns14=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:ns15=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:ns16=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:ns17=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:ns18=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:ns19=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:ns20=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:ns21=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:ns22=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:ns3=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:ns4=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:ns5=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:ns8=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:ns9=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trt2=\"http://www.onvif.org/ver20/media/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><trt:GetProfilesResponse><trt:Profiles fixed=\"true\" token=\"000\"><tt:Name>Profile_000</tt:Name><tt:VideoSourceConfiguration token=\"000\"><tt:Name>VideoS_000</tt:Name><tt:UseCount>3</tt:UseCount><tt:SourceToken>000</tt:SourceToken><tt:Bounds height=\"1080\" width=\"1920\" y=\"0\" x=\"0\"></tt:Bounds></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"000\"><tt:Name>Audio_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>000</tt:SourceToken></tt:AudioSourceConfiguration><tt:VideoEncoderConfiguration token=\"000\"><tt:Name>VideoE_000</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality><tt:RateControl><tt:FrameRateLimit>25</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2560</tt:BitrateLimit></tt:RateControl><tt:H264><tt:GovLength>2</tt:GovLength><tt:H264Profile>High</tt:H264Profile></tt:H264><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>224.1.2.3</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT10S</tt:SessionTimeout></tt:VideoEncoderConfiguration><tt:AudioEncoderConfiguration token=\"000\"><tt:Name>AudioE_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:Encoding>G711</tt:Encoding><tt:Bitrate>64</tt:Bitrate><tt:SampleRate>8</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>224.1.2.3</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT10S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:VideoAnalyticsConfiguration token=\"000\"><tt:Name>Analytics_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:AnalyticsEngineConfiguration><tt:AnalyticsModule Type=\"tt:CellMotionEngine\" Name=\"MyCellMotionEngine\"><tt:Parameters><tt:SimpleItem Value=\"4\" Name=\"Sensitivity\"></tt:SimpleItem><tt:ElementItem Name=\"Layout\"><tt:CellLayout Columns=\"22\" Rows=\"18\"><tt:Transformation><tt:Translate x=\"-1.0\" y=\"-1.0\" /><tt:Scale x=\"0.09090\" y=\"0.111111\" /></tt:Transformation></tt:CellLayout></tt:ElementItem></tt:Parameters></tt:AnalyticsModule><tt:AnalyticsModule Type=\"tt:TamperEngine\" Name=\"MyTamperEngine\"><tt:Parameters><tt:SimpleItem Value=\"4\" Name=\"Sensitivity\"></tt:SimpleItem><tt:ElementItem Name=\"Field\"><tt:PolygonConfiguration><tt:Polygon><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/></tt:Polygon></tt:PolygonConfiguration></tt:ElementItem><tt:ElementItem Name=\"Transform\"><tt:Transformation><tt:Translate x=\"-1.0\" y=\"-1.0\"/><tt:Scale x=\"0.001250\" y=\"0.001667\"/></tt:Transformation></tt:ElementItem></tt:Parameters></tt:AnalyticsModule></tt:AnalyticsEngineConfiguration><tt:RuleEngineConfiguration><tt:Rule Type=\"tt:CellMotionDetector\" Name=\"MyMotionDetectorRule\"><tt:Parameters><tt:SimpleItem Value=\"zwA\" Name=\"ActiveCells\"></tt:SimpleItem><tt:SimpleItem Value=\"1000\" Name=\"AlarmOffDelay\"></tt:SimpleItem><tt:SimpleItem Value=\"1000\" Name=\"AlarmOnDelay\"></tt:SimpleItem><tt:SimpleItem Value=\"4\" Name=\"MinCount\"></tt:SimpleItem></tt:Parameters></tt:Rule><tt:Rule Type=\"tt:TamperDetector\" Name=\"MyTamperDetectorRule\"><tt:Parameters><tt:ElementItem Name=\"Field\"><tt:PolygonConfiguration><tt:Polygon><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/></tt:Polygon></tt:PolygonConfiguration></tt:ElementItem></tt:Parameters></tt:Rule></tt:RuleEngineConfiguration></tt:VideoAnalyticsConfiguration><tt:PTZConfiguration token=\"000\"><tt:Name>PTZ_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:NodeToken>000</tt:NodeToken><tt:DefaultRelativePanTiltTranslationSpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace</tt:DefaultRelativePanTiltTranslationSpace><tt:DefaultRelativeZoomTranslationSpace>http://www.onvif.org/ver10/tptz/ZoomSpaces/TranslationGenericSpace</tt:DefaultRelativeZoomTranslationSpace><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultContinuousZoomVelocitySpace>http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace</tt:DefaultContinuousZoomVelocitySpace><tt:DefaultPTZSpeed><tt:PanTilt space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/GenericSpeedSpace\" y=\"1\" x=\"1\"></tt:PanTilt><tt:Zoom space=\"http://www.onvif.org/ver10/tptz/ZoomSpaces/ZoomGenericSpeedSpace\" x=\"1\"></tt:Zoom></tt:DefaultPTZSpeed><tt:DefaultPTZTimeout>PT1S</tt:DefaultPTZTimeout><tt:PanTiltLimits><tt:Range><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:Range></tt:PanTiltLimits><tt:ZoomLimits><tt:Range><tt:URI>http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange></tt:Range></tt:ZoomLimits></tt:PTZConfiguration></trt:Profiles><trt:Profiles fixed=\"true\" token=\"001\"><tt:Name>Profile_001</tt:Name><tt:VideoSourceConfiguration token=\"000\"><tt:Name>VideoS_000</tt:Name><tt:UseCount>3</tt:UseCount><tt:SourceToken>000</tt:SourceToken><tt:Bounds height=\"1080\" width=\"1920\" y=\"0\" x=\"0\"></tt:Bounds></tt:VideoSourceConfiguration><tt:AudioSourceConfiguration token=\"000\"><tt:Name>Audio_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:SourceToken>000</tt:SourceToken></tt:AudioSourceConfiguration><tt:VideoEncoderConfiguration token=\"001\"><tt:Name>VideoE_001</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding><tt:Resolution><tt:Width>704</tt:Width><tt:Height>576</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality><tt:RateControl><tt:FrameRateLimit>25</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>1024</tt:BitrateLimit></tt:RateControl><tt:H264><tt:GovLength>2</tt:GovLength><tt:H264Profile>High</tt:H264Profile></tt:H264><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>224.1.2.3</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT10S</tt:SessionTimeout></tt:VideoEncoderConfiguration><tt:AudioEncoderConfiguration token=\"000\"><tt:Name>AudioE_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:Encoding>G711</tt:Encoding><tt:Bitrate>64</tt:Bitrate><tt:SampleRate>8</tt:SampleRate><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>224.1.2.3</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT10S</tt:SessionTimeout></tt:AudioEncoderConfiguration><tt:VideoAnalyticsConfiguration token=\"000\"><tt:Name>Analytics_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:AnalyticsEngineConfiguration><tt:AnalyticsModule Type=\"tt:CellMotionEngine\" Name=\"MyCellMotionEngine\"><tt:Parameters><tt:SimpleItem Value=\"4\" Name=\"Sensitivity\"></tt:SimpleItem><tt:ElementItem Name=\"Layout\"><tt:CellLayout Columns=\"22\" Rows=\"18\"><tt:Transformation><tt:Translate x=\"-1.0\" y=\"-1.0\" /><tt:Scale x=\"0.09090\" y=\"0.111111\" /></tt:Transformation></tt:CellLayout></tt:ElementItem></tt:Parameters></tt:AnalyticsModule><tt:AnalyticsModule Type=\"tt:TamperEngine\" Name=\"MyTamperEngine\"><tt:Parameters><tt:SimpleItem Value=\"4\" Name=\"Sensitivity\"></tt:SimpleItem><tt:ElementItem Name=\"Field\"><tt:PolygonConfiguration><tt:Polygon><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/></tt:Polygon></tt:PolygonConfiguration></tt:ElementItem><tt:ElementItem Name=\"Transform\"><tt:Transformation><tt:Translate x=\"-1.0\" y=\"-1.0\"/><tt:Scale x=\"0.001250\" y=\"0.001667\"/></tt:Transformation></tt:ElementItem></tt:Parameters></tt:AnalyticsModule></tt:AnalyticsEngineConfiguration><tt:RuleEngineConfiguration><tt:Rule Type=\"tt:CellMotionDetector\" Name=\"MyMotionDetectorRule\"><tt:Parameters><tt:SimpleItem Value=\"zwA\" Name=\"ActiveCells\"></tt:SimpleItem><tt:SimpleItem Value=\"1000\" Name=\"AlarmOffDelay\"></tt:SimpleItem><tt:SimpleItem Value=\"1000\" Name=\"AlarmOnDelay\"></tt:SimpleItem><tt:SimpleItem Value=\"4\" Name=\"MinCount\"></tt:SimpleItem></tt:Parameters></tt:Rule><tt:Rule Type=\"tt:TamperDetector\" Name=\"MyTamperDetectorRule\"><tt:Parameters><tt:ElementItem Name=\"Field\"><tt:PolygonConfiguration><tt:Polygon><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/><tt:Point x=\"0\" y=\"0\"/></tt:Polygon></tt:PolygonConfiguration></tt:ElementItem></tt:Parameters></tt:Rule></tt:RuleEngineConfiguration></tt:VideoAnalyticsConfiguration><tt:PTZConfiguration token=\"000\"><tt:Name>PTZ_000</tt:Name><tt:UseCount>2</tt:UseCount><tt:NodeToken>000</tt:NodeToken><tt:DefaultRelativePanTiltTranslationSpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace</tt:DefaultRelativePanTiltTranslationSpace><tt:DefaultRelativeZoomTranslationSpace>http://www.onvif.org/ver10/tptz/ZoomSpaces/TranslationGenericSpace</tt:DefaultRelativeZoomTranslationSpace><tt:DefaultContinuousPanTiltVelocitySpace>http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace</tt:DefaultContinuousPanTiltVelocitySpace><tt:DefaultContinuousZoomVelocitySpace>http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace</tt:DefaultContinuousZoomVelocitySpace><tt:DefaultPTZSpeed><tt:PanTilt space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/GenericSpeedSpace\" y=\"1\" x=\"1\"></tt:PanTilt><tt:Zoom space=\"http://www.onvif.org/ver10/tptz/ZoomSpaces/ZoomGenericSpeedSpace\" x=\"1\"></tt:Zoom></tt:DefaultPTZSpeed><tt:DefaultPTZTimeout>PT1S</tt:DefaultPTZTimeout><tt:PanTiltLimits><tt:Range><tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange><tt:YRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:YRange></tt:Range></tt:PanTiltLimits><tt:ZoomLimits><tt:Range><tt:URI>http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace</tt:URI><tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange></tt:Range></tt:ZoomLimits></tt:PTZConfiguration></trt:Profiles><trt:Profiles fixed=\"true\" token=\"002\"><tt:Name>Profile_002</tt:Name><tt:VideoSourceConfiguration token=\"000\"><tt:Name>VideoS_000</tt:Name><tt:UseCount>3</tt:UseCount><tt:SourceToken>000</tt:SourceToken><tt:Bounds height=\"1080\" width=\"1920\" y=\"0\" x=\"0\"></tt:Bounds></tt:VideoSourceConfiguration><tt:VideoEncoderConfiguration token=\"002\"><tt:Name>VideoE_002</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>JPEG</tt:Encoding><tt:Resolution><tt:Width>704</tt:Width><tt:Height>576</tt:Height></tt:Resolution><tt:Quality>4</tt:Quality><tt:RateControl><tt:FrameRateLimit>-3600</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>512</tt:BitrateLimit></tt:RateControl><tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>224.1.2.3</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>0</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast><tt:SessionTimeout>PT10S</tt:SessionTimeout></tt:VideoEncoderConfiguration></trt:Profiles></trt:GetProfilesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>";
+                configure_post(
+                    &mut mock,
+                    &"test_inner_get_device_profiles-url".to_string(),
+                    &get_action(MEDIA_WSDL, "GetProfiles"),
+                    &GET_PROFILES_TEMPLATE.to_string(),
+                    &response.to_string(),
+                );
+            }
+            assert_eq!(
+                vec!["000".to_string(), "001".to_string(), "002".to_string()],
+                inner_get_device_profiles(
+                    &"test_inner_get_device_profiles-url".to_string(),
+                    &mock
+                )
+                .await
+                .unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn test_inner_get_device_profile_streaming_uri() {
+            let _ = env_logger::builder().is_test(true).try_init();
+
+            let expected_result = vec![
+                "rtsp://192.168.0.36:554/user=admin_password=tlJwpbo6_channel=1_stream=0.sdp?real_stream".to_string(),
+                "rtsp://192.168.1.36:554/user=admin_password=tlJwpbo6_channel=1_stream=0.sdp?real_stream".to_string(),
+                "rtsp://192.168.2.36:554/user=admin_password=tlJwpbo6_channel=1_stream=0.sdp?real_stream".to_string()
+            ];
+
+            for i in 0..3 {
+                let mut mock = MockHttpImpl::new();
+                let profile = format!("00{}", i).to_string();
+                let message = get_stream_uri_message(&profile);
+                let response = format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:SOAP-ENC=\"http://www.w3.org/2003/05/soap-encoding\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:xs=\"http://www.w3.org/2000/10/XMLSchema\" xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" xmlns:wsa5=\"http://www.w3.org/2005/08/addressing\" xmlns:xop=\"http://www.w3.org/2004/08/xop/include\" xmlns:wsa=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:tt=\"http://www.onvif.org/ver10/schema\" xmlns:ns1=\"http://www.w3.org/2005/05/xmlmime\" xmlns:wstop=\"http://docs.oasis-open.org/wsn/t-1\" xmlns:ns7=\"http://docs.oasis-open.org/wsrf/r-2\" xmlns:ns2=\"http://docs.oasis-open.org/wsrf/bf-2\" xmlns:dndl=\"http://www.onvif.org/ver10/network/wsdl/DiscoveryLookupBinding\" xmlns:dnrd=\"http://www.onvif.org/ver10/network/wsdl/RemoteDiscoveryBinding\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\" xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\" xmlns:ns10=\"http://www.onvif.org/ver10/replay/wsdl\" xmlns:ns11=\"http://www.onvif.org/ver10/search/wsdl\" xmlns:ns13=\"http://www.onvif.org/ver20/analytics/wsdl/RuleEngineBinding\" xmlns:ns14=\"http://www.onvif.org/ver20/analytics/wsdl/AnalyticsEngineBinding\" xmlns:tan=\"http://www.onvif.org/ver20/analytics/wsdl\" xmlns:ns15=\"http://www.onvif.org/ver10/events/wsdl/PullPointSubscriptionBinding\" xmlns:ns16=\"http://www.onvif.org/ver10/events/wsdl/EventBinding\" xmlns:tev=\"http://www.onvif.org/ver10/events/wsdl\" xmlns:ns17=\"http://www.onvif.org/ver10/events/wsdl/SubscriptionManagerBinding\" xmlns:ns18=\"http://www.onvif.org/ver10/events/wsdl/NotificationProducerBinding\" xmlns:ns19=\"http://www.onvif.org/ver10/events/wsdl/NotificationConsumerBinding\" xmlns:ns20=\"http://www.onvif.org/ver10/events/wsdl/PullPointBinding\" xmlns:ns21=\"http://www.onvif.org/ver10/events/wsdl/CreatePullPointBinding\" xmlns:ns22=\"http://www.onvif.org/ver10/events/wsdl/PausableSubscriptionManagerBinding\" xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\" xmlns:ns3=\"http://www.onvif.org/ver10/analyticsdevice/wsdl\" xmlns:ns4=\"http://www.onvif.org/ver10/deviceIO/wsdl\" xmlns:ns5=\"http://www.onvif.org/ver10/display/wsdl\" xmlns:ns8=\"http://www.onvif.org/ver10/receiver/wsdl\" xmlns:ns9=\"http://www.onvif.org/ver10/recording/wsdl\" xmlns:tds=\"http://www.onvif.org/ver10/device/wsdl\" xmlns:timg=\"http://www.onvif.org/ver20/imaging/wsdl\" xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\" xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\" xmlns:trt2=\"http://www.onvif.org/ver20/media/wsdl\" xmlns:ter=\"http://www.onvif.org/ver10/error\" xmlns:tns1=\"http://www.onvif.org/ver10/topics\" xmlns:tnsn=\"http://www.eventextension.com/2011/event/topics\"><SOAP-ENV:Header></SOAP-ENV:Header><SOAP-ENV:Body><trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>rtsp://192.168.{}.36:554/user=admin_password=tlJwpbo6_channel=1_stream=0.sdp?real_stream</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect><tt:InvalidAfterReboot>false</tt:InvalidAfterReboot><tt:Timeout>PT10S</tt:Timeout></trt:MediaUri></trt:GetStreamUriResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>",
+                    i
+                );
+                configure_post(
+                    &mut mock,
+                    &"test_inner_get_device_profile_streaming_uri-url".to_string(),
+                    &get_action(MEDIA_WSDL, "GetStreamUri"),
+                    &message,
+                    &response.to_string(),
+                );
+
+                assert_eq!(
+                    expected_result[i].to_string(),
+                    inner_get_device_profile_streaming_uri(
+                        &"test_inner_get_device_profile_streaming_uri-url".to_string(),
+                        &profile,
+                        &mock
+                    )
+                    .await
+                    .unwrap()
+                );
+            }
+        }
+
+        #[test]
+        fn test_http_handle_request_body_no_panic() {
+            assert!(HttpRequest::handle_request_body("\r\n").is_err());
+        }
+    }
 }
