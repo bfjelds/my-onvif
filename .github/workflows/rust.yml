@@ -1,0 +1,34 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install linux requirement
+      run: sudo apt update && sudo apt install -y git curl libssl-dev pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav libgstrtspserver-1.0-dev libges-1.0-dev libudev-dev
+    - name: Install rust requirements
+      run: rustup component add rustfmt
+    - name: Check rust format
+      run: cargo fmt --all -- --check
+    - name: Check clippy
+      run: cargo clippy -- -D warnings
+    - name: Run check
+      run: cargo check
+    - name: Run tests
+      run: cargo test
+    - name: Run tests --ignored
+      run: cargo test -- --ignored
+    - name: Run doc
+      run: cargo doc --no-deps
