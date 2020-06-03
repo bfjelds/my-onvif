@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Create tarpaulin instance
+      run: docker create --network host --security-opt seccomp=unconfined -v "${PWD}:/volume" xd009642/tarpaulin:0.13.1 bash -c "echo 'sleep 20m; echo bye' > /tmp/keep_alive.sh; chmod 777 /tmp/keep_alive.sh; /tmp/keep_alive.sh" > container_id.txt
+    - name: Start tarpaulin instance
+      run: docker start $(cat container_id.txt)
+    - name: Install linux requirement in tarpaulin instance
+      run: docker exec $(cat container_id.txt) sh -c "apt update && apt install -y git curl libssl-dev pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav libgstrtspserver-1.0-dev libges-1.0-dev libudev-dev"
+    - name: Install rust requirements in tarpaulin instance
+      run: docker exec $(cat container_id.txt) sh -c "rustup component add rustfmt"
+    - uses: actions/checkout@v2
+    - name: Run tarpaulin
+      run: docker exec $(cat container_id.txt) sh -c "cargo tarpaulin --out Xml"
