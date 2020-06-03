@@ -1,4 +1,4 @@
-name: Rust
+name: Tarpaulin Code Coverage
 
 on:
   push:
