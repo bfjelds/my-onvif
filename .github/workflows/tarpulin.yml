@@ -25,4 +25,4 @@ jobs:
     - name: Install rust requirements in tarpaulin instance
       run: docker exec $(cat container_id.txt) sh -c "rustup component add rustfmt"
     - name: Run tarpaulin
-      run: docker exec $(cat container_id.txt) sh -c "cargo tarpaulin --out Xml"
+      run: docker exec $(cat container_id.txt) sh -c "cargo tarpaulin -v --out Xml"
